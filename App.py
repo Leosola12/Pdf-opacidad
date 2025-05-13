@@ -1,54 +1,58 @@
 import streamlit as st
-import io
-from pypdf import PdfReader, PdfWriter
+from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
+from io import BytesIO
 
-# Subida del archivo PDF
-st.title("Reducción de Opacidad en PDFs")
-st.write("Sube tu archivo PDF y elige el nivel de opacidad.")
-pdf_file = st.file_uploader("Sube un archivo PDF", type="pdf")
+def create_opacity_overlay(width, height, opacity):
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=(width, height))
+    c.setFillAlpha(opacity)
+    c.setFillColorRGB(1, 1, 1)  # Blanco
+    c.rect(0, 0, width, height, fill=1, stroke=0)
+    c.save()
+    buffer.seek(0)
+    return buffer
 
-if pdf_file is not None:
-    # Lectura del archivo PDF
-    pdf_bytes = pdf_file.read()
-    pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
+def reduce_opacity(input_pdf, opacity):
+    input_reader = PdfReader(input_pdf)
+    output_writer = PdfWriter()
 
-    # Opciones de opacidad (del 10% al 50%)
-    opacities = [i / 100 for i in range(10, 51, 10)]
-    selected_opacity = st.selectbox("Elige el nivel de opacidad", opacities, format_func=lambda x: f"{int(x * 100)}%")
+    for page in input_reader.pages:
+        width = float(page.mediabox.width)
+        height = float(page.mediabox.height)
 
-    # Procesar el PDF con la opacidad seleccionada
-    if st.button("Generar PDF con opacidad"):
-        writer = PdfWriter()
+        overlay_stream = create_opacity_overlay(width, height, opacity)
+        overlay_pdf = PdfReader(overlay_stream)
+        overlay_page = overlay_pdf.pages[0]
 
-        for page_num in range(len(pdf_reader.pages)):
-            original_page = pdf_reader.pages[page_num]
-            width = float(original_page.mediabox.width)
-            height = float(original_page.mediabox.height)
+        page.merge_page(overlay_page)
+        output_writer.add_page(page)
 
-            # Crear la capa de opacidad en memoria
-            with io.BytesIO() as overlay_stream:
-                c = canvas.Canvas(overlay_stream, pagesize=(width, height))
-                c.setFillAlpha(selected_opacity)
-                c.setFillColorRGB(1, 1, 1)  # blanco transparente
-                c.rect(0, 0, width, height, fill=1)
-                c.save()
-                overlay_stream.seek(0)
+    output_pdf = BytesIO()
+    output_writer.write(output_pdf)
+    output_pdf.seek(0)
+    return output_pdf
 
-                overlay_pdf = PdfReader(overlay_stream)
-                overlay_page = overlay_pdf.pages[0]
+# Streamlit UI
+st.set_page_config(page_title="Reductor de Opacidad PDF", layout="centered")
+st.title("🔍 Reductor Automático de Opacidad para PDFs")
+st.write("Subí un PDF y descargá versiones con distintas opacidades para ahorrar tinta.")
 
-                # Clonar la página original y superponer la capa de opacidad
-                original_page.merge_page(overlay_page)
-                writer.add_page(original_page)
+uploaded_file = st.file_uploader("📄 Subí tu PDF", type=["pdf"])
 
-        # Guardar el archivo PDF resultante
-        output_pdf_path = "output_opacity.pdf"
-        with open(output_pdf_path, "wb") as f:
-            writer.write(f)
+if uploaded_file:
+    if st.button("Procesar PDF con múltiples opacidades"):
+        with st.spinner("Procesando... Esto puede tardar unos segundos."):
+            resultados = {}
+            for opacidad in [0.1, 0.2, 0.3, 0.4, 0.5]:
+                processed = reduce_opacity(uploaded_file, opacidad)
+                resultados[f"{int(opacidad * 100)}%"] = processed
 
-        st.success(f"✔️ PDF con opacidad {int(selected_opacity * 100)}% generado exitosamente.")
-        
-        # Permitir la descarga del PDF generado
-        with open(output_pdf_path, "rb") as f:
-            st.download_button("Descargar PDF", f, file_name=output_pdf_path)
+        st.success("✅ PDFs procesados correctamente. Elegí una versión para descargar:")
+        for label, data in resultados.items():
+            st.download_button(
+                label=f"📥 Descargar versión con {label} de opacidad",
+                data=data,
+                file_name=f"pdf_opacidad_{label}.pdf",
+                mime="application/pdf"
+            )
